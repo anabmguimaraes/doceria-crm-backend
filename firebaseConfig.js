@@ -1,23 +1,22 @@
 const admin = require("firebase-admin");
 
-// Esta variável de ambiente será configurada no serviço de hospedagem (Render).
-const serviceAccountString = process.env.FIREBASE_SERVICE_ACCOUNT;
-
+// Tenta carregar as credenciais da variável de ambiente primeiro
 let serviceAccount;
-
-if (serviceAccountString) {
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   try {
-    // Em produção (no Render), parseamos a string da variável de ambiente.
-    serviceAccount = JSON.parse(serviceAccountString);
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   } catch (e) {
-    console.error('Erro ao fazer parse da credencial do Firebase a partir da variável de ambiente:', e);
-    process.exit(1); // Encerra o processo se a credencial for inválida
+    console.error('Erro ao analisar FIREBASE_SERVICE_ACCOUNT:', e);
+    throw new Error('A variável de ambiente FIREBASE_SERVICE_ACCOUNT não é um JSON válido.');
   }
 } else {
-  // Em desenvolvimento (local), carregamos o ficheiro JSON.
-  // Certifique-se de que este ficheiro está no seu .gitignore!
-  console.log("Carregando credenciais do ficheiro local serviceAccountKey.json...");
-  serviceAccount = require("./serviceAccountKey.json");
+  // Se não encontrar, carrega do arquivo local (para desenvolvimento)
+  try {
+    serviceAccount = require("./serviceAccountKey.json");
+  } catch (e) {
+    console.error('serviceAccountKey.json não encontrado.', e);
+    throw new Error('Necessário para desenvolvimento local. Crie a variável de ambiente para produção.');
+  }
 }
 
 admin.initializeApp({
@@ -27,4 +26,3 @@ admin.initializeApp({
 const db = admin.firestore();
 
 module.exports = { db };
-
