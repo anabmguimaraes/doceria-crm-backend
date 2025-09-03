@@ -6,23 +6,8 @@ const app = express();
 const port = 5000;
 
 // Middlewares
-const allowedOrigins = [
-  'http://localhost:3000', // Para desenvolvimento local
-  'https://www.anaguimaraesdoceria.com.br', // Seu domínio principal
-  'https://doceria-crm-frontend-gvd-ana-beatrizs-projects-1a0a8d4e.vercel.app' // Domínio da Vercel
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }
-}));
+app.use(cors()); // Permite temporariamente todas as origens para teste
 app.use(express.json());
-
 // Rota de Teste
 app.get('/', (req, res) => {
   res.send('Servidor do CRM da Doceria está no ar!');
@@ -108,6 +93,7 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
 
 
