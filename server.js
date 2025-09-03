@@ -13,8 +13,8 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: [
-    "https://www.anaguimaraesdoceria.com.br", // produção
-    "http://localhost:3000" // dev local
+    "https://www.anaguimaraesdoceria.com.br",
+    "http://localhost:3000"
   ],
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -23,8 +23,11 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// 🔥 importante: isso garante que o preflight OPTIONS sempre responde corretamente
-app.options("*", cors(corsOptions));
+// 🔥 Esse aqui garante que qualquer OPTIONS receba resposta válida
+app.options("*", cors(corsOptions), (req, res) => {
+  res.sendStatus(200);
+});
+
 
 app.use(express.json());
 // Rota de Teste
@@ -112,6 +115,7 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
 
 
