@@ -12,7 +12,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://www.anaguimaraesdoceria.com.br',
   'https://anaguimaraesdoceria.com.br', // Adicione esta linha (sem www)
-  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app'
+  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app/'
 ];
 
 app.use(cors({
@@ -158,4 +158,5 @@ app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
   console.log(`Origens CORS permitidas:`, allowedOrigins);
 });
+
 
