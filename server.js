@@ -1,11 +1,10 @@
 const express = require('express');
-const cors = require('cors');
 const { db } = require('./firebaseConfig.js');
 
 const app = express();
 const port = 5000;
 
-// 🔥 Middleware manual de CORS
+// ✅ Middleware manual de CORS
 app.use((req, res, next) => {
   const allowedOrigins = [
     "https://www.anaguimaraesdoceria.com.br",
@@ -33,7 +32,6 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.send('Servidor do CRM da Doceria está no ar!');
 });
-
 
 // --- FUNÇÕES AUXILIARES DA API ---
 
@@ -87,39 +85,30 @@ const deleteItem = async (collectionName, req, res) => {
 
 // --- ENDPOINTS DA API ---
 
-// Endpoints para PRODUTOS
+// PRODUTOS
 app.get('/api/produtos', (req, res) => getAllItems('produtos', res));
 app.post('/api/produtos', (req, res) => createItem('produtos', req, res));
 app.put('/api/produtos/:id', (req, res) => updateItem('produtos', req, res));
 app.delete('/api/produtos/:id', (req, res) => deleteItem('produtos', req, res));
 
-// Endpoints para CLIENTES
+// CLIENTES
 app.get('/api/clientes', (req, res) => getAllItems('clientes', res));
 app.post('/api/clientes', (req, res) => createItem('clientes', req, res));
 app.put('/api/clientes/:id', (req, res) => updateItem('clientes', req, res));
 app.delete('/api/clientes/:id', (req, res) => deleteItem('clientes', req, res));
 
-// Endpoints para PEDIDOS
+// PEDIDOS
 app.get('/api/pedidos', (req, res) => getAllItems('pedidos', res));
 app.post('/api/pedidos', (req, res) => createItem('pedidos', req, res));
 app.put('/api/pedidos/:id', (req, res) => updateItem('pedidos', req, res));
 app.delete('/api/pedidos/:id', (req, res) => deleteItem('pedidos', req, res));
 
-// Endpoints para DESPESAS
+// DESPESAS
 app.get('/api/despesas', (req, res) => getAllItems('despesas', res));
 app.post('/api/despesas', (req, res) => createItem('despesas', req, res));
 app.put('/api/despesas/:id', (req, res) => updateItem('despesas', req, res));
 app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 
-
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
-
-
-
-
-
-
-
-
