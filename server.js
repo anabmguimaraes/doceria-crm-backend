@@ -11,16 +11,15 @@ const port = process.env.PORT || 5000;
 const allowedOrigins = [
   'http://localhost:3000',
   'https://www.anaguimaraesdoceria.com.br',
-  'https://anaguimaraesdoceria.com.br', // Sem www
-  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app',
-  // Adicione outros domínios do Vercel se necessário
+  'https://anaguimaraesdoceria.com.br', // Adicione esta linha (sem www)
+  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app'
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
     console.log('Origin da requisição:', origin); // Log para debug
     
-    // Permite requisições sem 'origin' (ex: Postman, apps mobile)
+    // Permite requisições sem 'origin' (ex: Postman)
     if (!origin) {
       return callback(null, true);
     }
@@ -33,7 +32,7 @@ app.use(cors({
       callback(new Error(`Acesso negado pela política de CORS para: ${origin}`));
     }
   },
-  credentials: true, // Permite cookies/credenciais
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -159,3 +158,4 @@ app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
   console.log(`Origens CORS permitidas:`, allowedOrigins);
 });
+
