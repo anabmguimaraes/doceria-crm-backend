@@ -1,41 +1,41 @@
 const express = require('express');
+const cors = require('cors'); // IMPORTANTE: Adicionar esta linha
 const { db } = require('./firebaseConfig.js');
 
 const app = express();
-const port = 5000;
+const port = process.env.PORT || 5000; // Boa prática para o Render
 
-// ✅ Middleware manual de CORS
-app.use((req, res, next) => {
-  const allowedOrigins = [
-    "https://www.anaguimaraesdoceria.com.br",
-    "http://localhost:3000"
-  ];
-  const origin = req.headers.origin;
+// --- Middlewares ---
 
-  if (allowedOrigins.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin);
+// ✅ Configuração de CORS correta usando a biblioteca
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://www.anaguimaraesdoceria.com.br',
+  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Permite requisições sem 'origin' (ex: Postman) ou se a origem estiver na lista
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Acesso negado pela política de CORS'));
+    }
   }
-
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-
-  next();
-});
+}));
 
 app.use(express.json());
+
+
+// --- Rotas e Lógica da API (sem alterações) ---
 
 // Rota de Teste
 app.get('/', (req, res) => {
   res.send('Servidor do CRM da Doceria está no ar!');
 });
 
-// --- FUNÇÕES AUXILIARES DA API ---
-
-// GET todos
+// FUNÇÕES AUXILIARES DA API
 const getAllItems = async (collectionName, res) => {
   try {
     const snapshot = await db.collection(collectionName).get();
@@ -47,18 +47,17 @@ const getAllItems = async (collectionName, res) => {
   }
 };
 
-// POST
 const createItem = async (collectionName, req, res) => {
   try {
     const docRef = await db.collection(collectionName).add(req.body);
-    res.status(201).json({ id: docRef.id, ...req.body });
+    const newItem = await docRef.get();
+    res.status(201).json({ id: newItem.id, ...newItem.data() });
   } catch (error) {
     console.error(`Erro ao criar ${collectionName}:`, error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// PUT
 const updateItem = async (collectionName, req, res) => {
   try {
     const { id } = req.params;
@@ -71,7 +70,6 @@ const updateItem = async (collectionName, req, res) => {
   }
 };
 
-// DELETE
 const deleteItem = async (collectionName, req, res) => {
   try {
     const { id } = req.params;
@@ -83,32 +81,28 @@ const deleteItem = async (collectionName, req, res) => {
   }
 };
 
-// --- ENDPOINTS DA API ---
-
-// PRODUTOS
+// ENDPOINTS DA API
 app.get('/api/produtos', (req, res) => getAllItems('produtos', res));
 app.post('/api/produtos', (req, res) => createItem('produtos', req, res));
 app.put('/api/produtos/:id', (req, res) => updateItem('produtos', req, res));
 app.delete('/api/produtos/:id', (req, res) => deleteItem('produtos', req, res));
 
-// CLIENTES
 app.get('/api/clientes', (req, res) => getAllItems('clientes', res));
 app.post('/api/clientes', (req, res) => createItem('clientes', req, res));
 app.put('/api/clientes/:id', (req, res) => updateItem('clientes', req, res));
 app.delete('/api/clientes/:id', (req, res) => deleteItem('clientes', req, res));
 
-// PEDIDOS
 app.get('/api/pedidos', (req, res) => getAllItems('pedidos', res));
 app.post('/api/pedidos', (req, res) => createItem('pedidos', req, res));
 app.put('/api/pedidos/:id', (req, res) => updateItem('pedidos', req, res));
 app.delete('/api/pedidos/:id', (req, res) => deleteItem('pedidos', req, res));
 
-// DESPESAS
 app.get('/api/despesas', (req, res) => getAllItems('despesas', res));
 app.post('/api/despesas', (req, res) => createItem('despesas', req, res));
 app.put('/api/despesas/:id', (req, res) => updateItem('despesas', req, res));
 app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 
+
 app.listen(port, () => {
-  console.log(`Servidor rodando em http://localhost:${port}`);
+  console.log(`Servidor rodando na porta ${port}`);
 });
