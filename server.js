@@ -1,13 +1,14 @@
 const express = require('express');
-const cors = require('cors'); // IMPORTANTE: Adicionar esta linha
+const cors = require('cors'); // Essencial: Garanta que esta linha exista
 const { db } = require('./firebaseConfig.js');
 
 const app = express();
-const port = process.env.PORT || 5000; // Boa prática para o Render
+// Usa a porta fornecida pelo Render, ou 5000 para desenvolvimento local
+const port = process.env.PORT || 5000;
 
 // --- Middlewares ---
 
-// ✅ Configuração de CORS correta usando a biblioteca
+// Configuração de CORS para permitir acesso dos seus domínios
 const allowedOrigins = [
   'http://localhost:3000',
   'https://www.anaguimaraesdoceria.com.br',
@@ -28,7 +29,7 @@ app.use(cors({
 app.use(express.json());
 
 
-// --- Rotas e Lógica da API (sem alterações) ---
+// --- Rotas e Lógica da API ---
 
 // Rota de Teste
 app.get('/', (req, res) => {
@@ -50,8 +51,8 @@ const getAllItems = async (collectionName, res) => {
 const createItem = async (collectionName, req, res) => {
   try {
     const docRef = await db.collection(collectionName).add(req.body);
-    const newItem = await docRef.get();
-    res.status(201).json({ id: newItem.id, ...newItem.data() });
+    const newItem = await docRef.get(); // Busca o documento recém-criado
+    res.status(201).json({ id: newItem.id, ...newItem.data() }); // Retorna o dado completo
   } catch (error) {
     console.error(`Erro ao criar ${collectionName}:`, error);
     res.status(500).json({ error: error.message });
@@ -106,3 +107,4 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
+
