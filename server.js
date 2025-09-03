@@ -8,12 +8,12 @@ const port = 5000;
 // Middlewares
 const allowedOrigins = [
   'http://localhost:3000', // Para desenvolvimento local
-  'https://SEU-DOMINIO-DO-FRONTEND.vercel.app' // IMPORTANTE: Substitua pelo seu domínio da Vercel
+  'https://www.anaguimaraesdoceria.com.br', // Seu domínio principal
+  'https://doceria-crm-frontend-gvd-ana-beatrizs-projects-1a0a8d4e.vercel.app' // Domínio da Vercel
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Permite requisições sem 'origin' (ex: Postman) ou se a origem estiver na lista
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -108,5 +108,6 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
 
