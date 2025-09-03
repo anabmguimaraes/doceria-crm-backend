@@ -5,35 +5,35 @@ const { db } = require('./firebaseConfig.js');
 const app = express();
 const port = 5000;
 
-// Middlewares
-const allowedOrigins = [
-  "https://www.anaguimaraesdoceria.com.br", // seu frontend no Vercel
-  "http://localhost:3000" // útil para desenvolvimento local
-];
-
-const corsOptions = {
-  origin: [
+// 🔥 Middleware manual de CORS
+app.use((req, res, next) => {
+  const allowedOrigins = [
     "https://www.anaguimaraesdoceria.com.br",
     "http://localhost:3000"
-  ],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
-};
+  ];
+  const origin = req.headers.origin;
 
-app.use(cors(corsOptions));
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
 
-// 🔥 Esse aqui garante que qualquer OPTIONS receba resposta válida
-app.options("*", cors(corsOptions), (req, res) => {
-  res.sendStatus(200);
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
 });
 
-
 app.use(express.json());
+
 // Rota de Teste
 app.get('/', (req, res) => {
   res.send('Servidor do CRM da Doceria está no ar!');
 });
+
 
 // --- FUNÇÕES AUXILIARES DA API ---
 
@@ -115,6 +115,7 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
 
 
