@@ -6,7 +6,23 @@ const app = express();
 const port = 5000;
 
 // Middlewares
-app.use(cors()); // Permite temporariamente todas as origens para teste
+const allowedOrigins = [
+  "https://www.anaguimaraesdoceria.com.br", // seu frontend no Vercel
+  "http://localhost:3000" // útil para desenvolvimento local
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 // Rota de Teste
 app.get('/', (req, res) => {
@@ -93,6 +109,7 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
 
 
