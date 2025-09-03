@@ -6,8 +6,20 @@ const app = express();
 const port = 5000;
 
 // Middlewares
+const allowedOrigins = [
+  'http://localhost:3000', // Para desenvolvimento local
+  'https://SEU-DOMINIO-DO-FRONTEND.vercel.app' // IMPORTANTE: Substitua pelo seu domínio da Vercel
+];
+
 app.use(cors({
-  origin: 'http://localhost:3000' 
+  origin: function (origin, callback) {
+    // Permite requisições sem 'origin' (ex: Postman) ou se a origem estiver na lista
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
 }));
 app.use(express.json());
 
@@ -96,4 +108,5 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
