@@ -11,17 +11,20 @@ const allowedOrigins = [
   "http://localhost:3000" // útil para desenvolvimento local
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+const corsOptions = {
+  origin: [
+    "https://www.anaguimaraesdoceria.com.br", // produção
+    "http://localhost:3000" // dev local
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// 🔥 importante: isso garante que o preflight OPTIONS sempre responde corretamente
+app.options("*", cors(corsOptions));
 
 app.use(express.json());
 // Rota de Teste
@@ -109,6 +112,7 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 app.listen(port, () => {
   console.log(`Servidor rodando em http://localhost:${port}`);
 });
+
 
 
 
