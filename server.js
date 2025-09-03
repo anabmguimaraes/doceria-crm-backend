@@ -1,124 +1,181 @@
 const express = require('express');
 const cors = require('cors');
-const { db } = require('./firebaseConfig.js');
+
+// Inicialização do Firebase com tratamento de erro
+let db;
+try {
+  const firebaseConfig = require('./firebaseConfig.js');
+  db = firebaseConfig.db;
+  console.log('✅ Firebase conectado com sucesso');
+} catch (error) {
+  console.error('❌ Erro ao conectar Firebase:', error.message);
+  process.exit(1); // Para o servidor se não conseguir conectar ao Firebase
+}
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 // --- Middlewares ---
+console.log('🚀 Iniciando servidor...');
 
-// Configuração de CORS mais permissiva para debug
+// CORS configuração
 const allowedOrigins = [
   'http://localhost:3000',
   'https://www.anaguimaraesdoceria.com.br',
-  'https://anaguimaraesdoceria.com.br', // Sem www
-  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app',
-  // Adicione outros domínios do Vercel se necessário
+  'https://anaguimaraesdoceria.com.br',
+  'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app'
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    console.log('Origin da requisição:', origin); // Log para debug
+    console.log('🌐 Origin da requisição:', origin);
     
-    // Permite requisições sem 'origin' (ex: Postman, apps mobile)
     if (!origin) {
       return callback(null, true);
     }
     
-    // Verifica se a origem está na lista permitida
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.some(allowed => origin.includes(allowed.replace('https://', '').replace('http://', '')))) {
       callback(null, true);
     } else {
-      console.error('Origin bloqueada pelo CORS:', origin);
-      callback(new Error(`Acesso negado pela política de CORS para: ${origin}`));
+      console.error('🚫 Origin bloqueada:', origin);
+      callback(new Error(`CORS: Acesso negado para ${origin}`));
     }
   },
-  credentials: true, // Permite cookies/credenciais
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
 
-// Middleware de log para debug
+// Middleware de log
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log(`📝 ${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
 
-// --- Rotas e Lógica da API ---
+// --- Rotas ---
 
-// Rota de Teste
+// Rota principal
 app.get('/', (req, res) => {
+  console.log('📍 Rota raiz acessada');
   res.json({ 
     message: 'Servidor do CRM da Doceria está no ar!',
     timestamp: new Date().toISOString(),
-    status: 'online'
+    status: 'online',
+    endpoints: ['/api/clientes', '/api/produtos', '/api/pedidos', '/api/despesas']
   });
 });
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    firebase: 'connected'
-  });
+app.get('/health', async (req, res) => {
+  try {
+    // Testa conexão com Firebase
+    await db.collection('test').limit(1).get();
+    res.json({ 
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      firebase: 'connected'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'unhealthy',
+      error: error.message,
+      firebase: 'disconnected'
+    });
+  }
 });
 
-// FUNÇÕES AUXILIARES DA API
+// FUNÇÕES AUXILIARES
 const getAllItems = async (collectionName, res) => {
   try {
-    console.log(`Buscando todos os itens de: ${collectionName}`);
+    console.log(`🔍 Buscando itens de: ${collectionName}`);
     const snapshot = await db.collection(collectionName).get();
     const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    console.log(`Encontrados ${items.length} itens em ${collectionName}`);
+    console.log(`✅ Encontrados ${items.length} itens em ${collectionName}`);
     res.status(200).json(items);
   } catch (error) {
-    console.error(`Erro ao buscar ${collectionName}:`, error);
-    res.status(500).json({ error: error.message });
+    console.error(`❌ Erro ao buscar ${collectionName}:`, error);
+    res.status(500).json({ error: `Erro ao buscar ${collectionName}: ${error.message}` });
   }
 };
 
 const createItem = async (collectionName, req, res) => {
   try {
-    console.log(`Criando item em ${collectionName}:`, req.body);
-    const docRef = await db.collection(collectionName).add(req.body);
+    console.log(`➕ Criando item em ${collectionName}:`, req.body);
+    
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({ error: 'Dados do item são obrigatórios' });
+    }
+    
+    const docRef = await db.collection(collectionName).add({
+      ...req.body,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    
     const newItem = await docRef.get();
     const result = { id: newItem.id, ...newItem.data() };
-    console.log(`Item criado com sucesso:`, result);
+    console.log(`✅ Item criado com ID: ${result.id}`);
     res.status(201).json(result);
   } catch (error) {
-    console.error(`Erro ao criar ${collectionName}:`, error);
-    res.status(500).json({ error: error.message });
+    console.error(`❌ Erro ao criar ${collectionName}:`, error);
+    res.status(500).json({ error: `Erro ao criar ${collectionName}: ${error.message}` });
   }
 };
 
 const updateItem = async (collectionName, req, res) => {
   try {
     const { id } = req.params;
-    console.log(`Atualizando ${collectionName} ID ${id}:`, req.body);
-    await db.collection(collectionName).doc(id).update(req.body);
+    console.log(`📝 Atualizando ${collectionName} ID ${id}`);
+    
+    if (!id) {
+      return res.status(400).json({ error: 'ID é obrigatório' });
+    }
+    
+    const updateData = {
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+    
+    await db.collection(collectionName).doc(id).update(updateData);
     const updatedDoc = await db.collection(collectionName).doc(id).get();
+    
+    if (!updatedDoc.exists) {
+      return res.status(404).json({ error: 'Item não encontrado' });
+    }
+    
     const result = { id: updatedDoc.id, ...updatedDoc.data() };
-    console.log(`Item atualizado:`, result);
+    console.log(`✅ Item atualizado: ${id}`);
     res.status(200).json(result);
   } catch (error) {
-    console.error(`Erro ao atualizar ${collectionName}:`, error);
-    res.status(500).json({ error: error.message });
+    console.error(`❌ Erro ao atualizar ${collectionName}:`, error);
+    res.status(500).json({ error: `Erro ao atualizar ${collectionName}: ${error.message}` });
   }
 };
 
 const deleteItem = async (collectionName, req, res) => {
   try {
     const { id } = req.params;
-    console.log(`Deletando ${collectionName} ID: ${id}`);
-    await db.collection(collectionName).doc(id).delete();
-    console.log(`Item deletado com sucesso`);
-    res.status(200).json({ message: `${collectionName} com id ${id} deletado com sucesso.` });
+    console.log(`🗑️ Deletando ${collectionName} ID: ${id}`);
+    
+    if (!id) {
+      return res.status(400).json({ error: 'ID é obrigatório' });
+    }
+    
+    const docRef = db.collection(collectionName).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ error: 'Item não encontrado' });
+    }
+    
+    await docRef.delete();
+    console.log(`✅ Item deletado: ${id}`);
+    res.status(200).json({ message: `${collectionName} deletado com sucesso`, id });
   } catch (error) {
-    console.error(`Erro ao deletar ${collectionName}:`, error);
-    res.status(500).json({ error: error.message });
+    console.error(`❌ Erro ao deletar ${collectionName}:`, error);
+    res.status(500).json({ error: `Erro ao deletar ${collectionName}: ${error.message}` });
   }
 };
 
@@ -145,17 +202,23 @@ app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
-  console.error('Erro não tratado:', err);
+  console.error('💥 Erro não tratado:', err);
   res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
-// Rota 404
+// Rota 404 para debug
 app.use('*', (req, res) => {
-  console.log(`Rota não encontrada: ${req.method} ${req.originalUrl}`);
-  res.status(404).json({ error: 'Rota não encontrada' });
+  console.log(`❓ Rota não encontrada: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ 
+    error: 'Rota não encontrada',
+    path: req.originalUrl,
+    availableRoutes: ['/', '/health', '/api/clientes', '/api/produtos', '/api/pedidos', '/api/despesas']
+  });
 });
 
+// Inicialização do servidor
 app.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port}`);
-  console.log(`Origens CORS permitidas:`, allowedOrigins);
+  console.log(`🚀 Servidor rodando na porta ${port}`);
+  console.log(`🌐 CORS permitido para:`, allowedOrigins);
+  console.log(`📅 Iniciado em: ${new Date().toISOString()}`);
 });
