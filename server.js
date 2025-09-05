@@ -156,7 +156,7 @@ app.get('/api/users', async (req, res) => {
         const usersCollection = await db.collection('users').get();
         const userRoles = {};
         usersCollection.forEach(doc => { userRoles[doc.id] = doc.data().role; });
-        const combinedUsers = usersFromAuth.map(user => ({ uid: user.uid, email: user.email, role: userRoles[user.uid] || 'visitante' }));
+        const combinedUsers = usersFromAuth.map(user => ({ uid: user.uid, email: user.email, role: userRoles[user.uid] || 'Atendente' }));
         res.status(200).json(combinedUsers);
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
