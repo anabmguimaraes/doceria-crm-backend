@@ -35,6 +35,16 @@ const getAllItems = async (collectionName, res) => {
     const snapshot = await db.collection(collectionName).get();
     const items = snapshot.docs.map(doc => {
         const docData = doc.data();
+
+        // **INÍCIO DA CORREÇÃO**
+        // Garante que clientes antigos com o campo "endereco" (singular) sejam compatíveis
+        if (collectionName === 'clientes') {
+            if (docData.endereco && !docData.enderecos) {
+                docData.enderecos = [docData.endereco];
+            }
+        }
+        // **FIM DA CORREÇÃO**
+        
         // Converte Timestamps do Firestore para strings ISO 8601
         if (docData.createdAt && typeof docData.createdAt.toDate === 'function') {
             docData.createdAt = docData.createdAt.toDate().toISOString();
@@ -52,41 +62,37 @@ const getAllItems = async (collectionName, res) => {
 
 const createItem = async (collectionName, req, res) => {
   try {
-    // --- LÓGICA DE ESTOQUE PARA NOVOS PEDIDOS ---
+    const { createdAt, ...itemData } = req.body;
+    
+    // --- LÓGICA DE ESTOQUE E MÚLTIPLOS ENDEREÇOS ---
     if (collectionName === 'pedidos') {
       const { itens } = req.body;
-
       if (!itens || !Array.isArray(itens) || itens.length === 0) {
         return res.status(400).json({ error: 'O pedido deve conter um array de itens.' });
       }
-
-      // Usamos um "batch" para garantir que todas as atualizações de estoque ocorram juntas.
-      // Se uma falhar, nenhuma será aplicada.
       const batch = db.batch();
-
       for (const item of itens) {
         if (item.id && item.quantity > 0) {
           const productRef = db.collection('produtos').doc(item.id);
-          // Decrementa o estoque. FieldValue.increment é uma operação atômica e segura.
           batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(-item.quantity) });
         }
       }
-
-      await batch.commit(); // Executa a atualização em lote do estoque
+      await batch.commit();
+    } else if (collectionName === 'clientes' && itemData.endereco) {
+        // Garante que o primeiro endereço seja salvo em um array
+        itemData.enderecos = [itemData.endereco];
+        delete itemData.endereco; // Remove o campo antigo
     }
-    // --- FIM DA LÓGICA DE ESTOQUE ---
+    // --- FIM DA LÓGICA ---
 
-    // Lógica original para criar o item no banco de dados
-    const { createdAt, ...itemData } = req.body;
-    
     const itemWithTimestamp = {
       ...itemData,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
-
     if (collectionName === 'pedidos' && !itemWithTimestamp.origem) {
         itemWithTimestamp.origem = "Manual";
     }
+
     const docRef = await db.collection(collectionName).add(itemWithTimestamp);
     const newItemSnapshot = await docRef.get();
     const newItem = { id: newItemSnapshot.id, ...newItemSnapshot.data() };
@@ -105,30 +111,35 @@ const updateItem = async (collectionName, req, res) => {
     const updatedData = req.body;
     const itemRef = db.collection(collectionName).doc(id);
 
-    // Lógica especial para pedidos (Finalizado ou Cancelado)
+    // Lógica para adicionar um novo endereço a um cliente
+    if (collectionName === 'clientes' && updatedData.newAddress) {
+        await itemRef.update({
+            enderecos: admin.firestore.FieldValue.arrayUnion(updatedData.newAddress)
+        });
+        // Remove para não tentar atualizar o campo 'newAddress'
+        delete updatedData.newAddress;
+    }
+    
+    // Lógica para pedidos (Finalizado ou Cancelado)
     if (collectionName === 'pedidos') {
       const pedidoDoc = await itemRef.get();
       if (pedidoDoc.exists) {
         const originalPedido = pedidoDoc.data();
         const novoStatus = updatedData.status;
 
-        // --- DEVOLVE ITENS AO ESTOQUE SE O PEDIDO FOR CANCELADO ---
         if (novoStatus === 'Cancelado' && originalPedido.status !== 'Cancelado') {
           if (originalPedido.itens && Array.isArray(originalPedido.itens)) {
             const batch = db.batch();
             for (const item of originalPedido.itens) {
               if (item.id && item.quantity > 0) {
                 const productRef = db.collection('produtos').doc(item.id);
-                // Incrementa o estoque para devolver os itens.
                 batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(item.quantity) });
               }
             }
             await batch.commit();
           }
         }
-        // --- FIM DA LÓGICA DE CANCELAMENTO ---
-
-        // Lógica original para quando um pedido é Finalizado (atualiza dados do cliente)
+        
         if (novoStatus === 'Finalizado' && originalPedido.status !== 'Finalizado') {
           const { clienteId, total } = originalPedido;
           if (clienteId && total > 0) {
@@ -142,8 +153,11 @@ const updateItem = async (collectionName, req, res) => {
       }
     }
 
-    // Atualiza o item (pedido, cliente, etc.)
-    await itemRef.update(updatedData);
+    // Se ainda houver dados para atualizar (além de newAddress)
+    if (Object.keys(updatedData).length > 0) {
+        await itemRef.update(updatedData);
+    }
+    
     const updatedDocSnapshot = await itemRef.get();
     const updatedDoc = { id: updatedDocSnapshot.id, ...updatedDocSnapshot.data() };
      if (updatedDoc.createdAt && typeof updatedDoc.createdAt.toDate === 'function') {
@@ -229,3 +243,4 @@ app.delete('/api/users/:uid', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
+
