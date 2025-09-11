@@ -52,12 +52,36 @@ const getAllItems = async (collectionName, res) => {
 
 const createItem = async (collectionName, req, res) => {
   try {
-    // Remove qualquer 'createdAt' enviado pelo cliente para garantir que o servidor tenha o controle
+    // --- LÓGICA DE ESTOQUE PARA NOVOS PEDIDOS ---
+    if (collectionName === 'pedidos') {
+      const { itens } = req.body;
+
+      if (!itens || !Array.isArray(itens) || itens.length === 0) {
+        return res.status(400).json({ error: 'O pedido deve conter um array de itens.' });
+      }
+
+      // Usamos um "batch" para garantir que todas as atualizações de estoque ocorram juntas.
+      // Se uma falhar, nenhuma será aplicada.
+      const batch = db.batch();
+
+      for (const item of itens) {
+        if (item.id && item.quantity > 0) {
+          const productRef = db.collection('produtos').doc(item.id);
+          // Decrementa o estoque. FieldValue.increment é uma operação atômica e segura.
+          batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(-item.quantity) });
+        }
+      }
+
+      await batch.commit(); // Executa a atualização em lote do estoque
+    }
+    // --- FIM DA LÓGICA DE ESTOQUE ---
+
+    // Lógica original para criar o item no banco de dados
     const { createdAt, ...itemData } = req.body;
     
     const itemWithTimestamp = {
       ...itemData,
-      createdAt: admin.firestore.FieldValue.serverTimestamp() // Garante a data atual no servidor
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
     if (collectionName === 'pedidos' && !itemWithTimestamp.origem) {
@@ -71,7 +95,7 @@ const createItem = async (collectionName, req, res) => {
     }
     res.status(201).json(newItem);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: `Erro ao criar item: ${error.message}` });
   }
 };
 
@@ -81,17 +105,34 @@ const updateItem = async (collectionName, req, res) => {
     const updatedData = req.body;
     const itemRef = db.collection(collectionName).doc(id);
 
-    // Lógica especial para quando um pedido é finalizado
-    if (collectionName === 'pedidos' && updatedData.status === 'Finalizado') {
+    // Lógica especial para pedidos (Finalizado ou Cancelado)
+    if (collectionName === 'pedidos') {
       const pedidoDoc = await itemRef.get();
       if (pedidoDoc.exists) {
         const originalPedido = pedidoDoc.data();
-        // Apenas atualiza o cliente se o status ANTERIOR não era 'Finalizado'
-        if (originalPedido.status !== 'Finalizado') {
+        const novoStatus = updatedData.status;
+
+        // --- DEVOLVE ITENS AO ESTOQUE SE O PEDIDO FOR CANCELADO ---
+        if (novoStatus === 'Cancelado' && originalPedido.status !== 'Cancelado') {
+          if (originalPedido.itens && Array.isArray(originalPedido.itens)) {
+            const batch = db.batch();
+            for (const item of originalPedido.itens) {
+              if (item.id && item.quantity > 0) {
+                const productRef = db.collection('produtos').doc(item.id);
+                // Incrementa o estoque para devolver os itens.
+                batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(item.quantity) });
+              }
+            }
+            await batch.commit();
+          }
+        }
+        // --- FIM DA LÓGICA DE CANCELAMENTO ---
+
+        // Lógica original para quando um pedido é Finalizado (atualiza dados do cliente)
+        if (novoStatus === 'Finalizado' && originalPedido.status !== 'Finalizado') {
           const { clienteId, total } = originalPedido;
           if (clienteId && total > 0) {
             const clienteRef = db.collection('clientes').doc(clienteId);
-            // Usa FieldValue.increment para uma atualização segura e atômica
             await clienteRef.update({
               totalCompras: admin.firestore.FieldValue.increment(total),
               ultimaCompra: admin.firestore.FieldValue.serverTimestamp()
@@ -188,4 +229,3 @@ app.delete('/api/users/:uid', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
-
