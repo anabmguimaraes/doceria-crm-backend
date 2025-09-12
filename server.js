@@ -186,16 +186,53 @@ const deleteItem = async (collectionName, req, res) => {
   }
 };
 
-// ENDPOINTS GENÉRICOS
-const collections = ['produtos', 'clientes', 'pedidos', 'fornecedores', 'contas_a_pagar', 'contas_a_receber'];
-collections.forEach(collection => {
-    app.get(`/api/${collection}`, (req, res) => getAllItems(collection, res));
-    app.post(`/api/${collection}`, (req, res) => createItem(collection, req, res));
-    app.put(`/api/${collection}/:id`, (req, res) => updateItem(collection, req, res));
-    app.delete(`/api/${collection}/:id`, (req, res) => deleteItem(collection, req, res));
-});
+// ENDPOINTS
+app.get('/api/produtos', (req, res) => getAllItems('produtos', res));
+app.post('/api/produtos', (req, res) => createItem('produtos', req, res));
+app.put('/api/produtos/:id', (req, res) => updateItem('produtos', req, res));
+app.delete('/api/produtos/:id', (req, res) => deleteItem('produtos', req, res));
 
-// ENDPOINTS PARA USUÁRIOS (mantidos como estavam)
+app.get('/api/clientes', (req, res) => getAllItems('clientes', res));
+app.post('/api/clientes', (req, res) => createItem('clientes', req, res));
+app.put('/api/clientes/:id', (req, res) => updateItem('clientes', req, res));
+app.delete('/api/clientes/:id', (req, res) => deleteItem('clientes', req, res));
+
+app.get('/api/pedidos', (req, res) => getAllItems('pedidos', res));
+app.post('/api/pedidos', (req, res) => createItem('pedidos', req, res));
+app.put('/api/pedidos/:id', (req, res) => updateItem('pedidos', req, res));
+app.delete('/api/pedidos/:id', (req, res) => deleteItem('pedidos', req, res));
+
+app.get('/api/despesas', (req, res) => getAllItems('despesas', res));
+app.post('/api/despesas', (req, res) => createItem('despesas', req, res));
+app.put('/api/despesas/:id', (req, res) => updateItem('despesas', req, res));
+app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
+
+app.get('/api/contas_a_pagar', (req, res) => getAllItems('contas_a_pagar', res));
+app.post('/api/contas_a_pagar', (req, res) => createItem('contas_a_pagar', req, res));
+app.put('/api/contas_a_pagar/:id', (req, res) => updateItem('contas_a_pagar', req, res));
+app.delete('/api/contas_a_pagar/:id', (req, res) => deleteItem('contas_a_pagar', req, res));
+
+app.get('/api/contas_a_receber', (req, res) => getAllItems('contas_a_receber', res));
+app.post('/api/contas_a_receber', (req, res) => createItem('contas_a_receber', req, res));
+app.put('/api/contas_a_receber/:id', (req, res) => updateItem('contas_a_receber', req, res));
+app.delete('/api/contas_a_receber/:id', (req, res) => deleteItem('contas_a_receber', req, res));
+
+app.get('/api/fornecedores', (req, res) => getAllItems('fornecedores', res));
+app.post('/api/fornecedores', (req, res) => createItem('fornecedores', req, res));
+app.put('/api/fornecedores/:id', (req, res) => updateItem('fornecedores', req, res));
+app.delete('/api/fornecedores/:id', (req, res) => deleteItem('fornecedores', req, res));
+
+app.get('/api/pedidosCompra', (req, res) => getAllItems('pedidosCompra', res));
+app.post('/api/pedidosCompra', (req, res) => createItem('pedidosCompra', req, res));
+app.put('/api/pedidosCompra/:id', (req, res) => updateItem('pedidosCompra', req, res));
+app.delete('/api/pedidosCompra/:id', (req, res) => deleteItem('pedidosCompra', req, res));
+
+app.get('/api/estoque', (req, res) => getAllItems('estoque', res));
+app.post('/api/estoque', (req, res) => createItem('estoque', req, res));
+app.put('/api/estoque/:id', (req, res) => updateItem('estoque', req, res));
+app.delete('/api/estoque/:id', (req, res) => deleteItem('estoque', req, res));
+
+// ENDPOINTS PARA USUÁRIOS
 app.get('/api/users', async (req, res) => {
     try {
         const listUsersResult = await admin.auth().listUsers(1000);
@@ -235,3 +272,4 @@ app.delete('/api/users/:uid', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
+
