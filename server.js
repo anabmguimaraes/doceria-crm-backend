@@ -36,22 +36,19 @@ const getAllItems = async (collectionName, res) => {
     const items = snapshot.docs.map(doc => {
         const docData = doc.data();
 
-        // **INÍCIO DA CORREÇÃO**
-        // Garante que clientes antigos com o campo "endereco" (singular) sejam compatíveis
+        // Converte todos os campos que são Timestamps do Firestore para strings ISO 8601
+        Object.keys(docData).forEach(key => {
+            if (docData[key] && typeof docData[key].toDate === 'function') {
+                docData[key] = docData[key].toDate().toISOString();
+            }
+        });
+
         if (collectionName === 'clientes') {
             if (docData.endereco && !docData.enderecos) {
                 docData.enderecos = [docData.endereco];
             }
         }
-        // **FIM DA CORREÇÃO**
         
-        // Converte Timestamps do Firestore para strings ISO 8601
-        if (docData.createdAt && typeof docData.createdAt.toDate === 'function') {
-            docData.createdAt = docData.createdAt.toDate().toISOString();
-        }
-        if (docData.ultimaCompra && typeof docData.ultimaCompra.toDate === 'function') {
-            docData.ultimaCompra = docData.ultimaCompra.toDate().toISOString();
-        }
         return { id: doc.id, ...docData };
     });
     res.status(200).json(items);
@@ -64,7 +61,7 @@ const createItem = async (collectionName, req, res) => {
   try {
     const { createdAt, ...itemData } = req.body;
     
-    // --- LÓGICA DE ESTOQUE E MÚLTIPLOS ENDEREÇOS ---
+    // Lógica específica por coleção
     if (collectionName === 'pedidos') {
       const { itens } = req.body;
       if (!itens || !Array.isArray(itens) || itens.length === 0) {
@@ -79,16 +76,22 @@ const createItem = async (collectionName, req, res) => {
       }
       await batch.commit();
     } else if (collectionName === 'clientes' && itemData.endereco) {
-        // Garante que o primeiro endereço seja salvo em um array
         itemData.enderecos = [itemData.endereco];
-        delete itemData.endereco; // Remove o campo antigo
+        delete itemData.endereco;
     }
-    // --- FIM DA LÓGICA ---
 
     const itemWithTimestamp = {
       ...itemData,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
+    
+    // Adiciona data de vencimento/recebimento se não existir
+    if((collectionName === 'contas_a_pagar' && !itemData.dataVencimento) || (collectionName === 'contas_a_receber' && !itemData.dataRecebimento)) {
+        const key = collectionName === 'contas_a_pagar' ? 'dataVencimento' : 'dataRecebimento';
+        itemWithTimestamp[key] = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+
     if (collectionName === 'pedidos' && !itemWithTimestamp.origem) {
         itemWithTimestamp.origem = "Manual";
     }
@@ -96,9 +99,11 @@ const createItem = async (collectionName, req, res) => {
     const docRef = await db.collection(collectionName).add(itemWithTimestamp);
     const newItemSnapshot = await docRef.get();
     const newItem = { id: newItemSnapshot.id, ...newItemSnapshot.data() };
-    if (newItem.createdAt && typeof newItem.createdAt.toDate === 'function') {
-      newItem.createdAt = newItem.createdAt.toDate().toISOString();
-    }
+    Object.keys(newItem).forEach(key => {
+        if (newItem[key] && typeof newItem[key].toDate === 'function') {
+            newItem[key] = newItem[key].toDate().toISOString();
+        }
+    });
     res.status(201).json(newItem);
   } catch (error) {
     res.status(500).json({ error: `Erro ao criar item: ${error.message}` });
@@ -110,17 +115,14 @@ const updateItem = async (collectionName, req, res) => {
     const { id } = req.params;
     const updatedData = req.body;
     const itemRef = db.collection(collectionName).doc(id);
-
-    // Lógica para adicionar um novo endereço a um cliente
+    
     if (collectionName === 'clientes' && updatedData.newAddress) {
         await itemRef.update({
             enderecos: admin.firestore.FieldValue.arrayUnion(updatedData.newAddress)
         });
-        // Remove para não tentar atualizar o campo 'newAddress'
         delete updatedData.newAddress;
     }
     
-    // Lógica para pedidos (Finalizado ou Cancelado)
     if (collectionName === 'pedidos') {
       const pedidoDoc = await itemRef.get();
       if (pedidoDoc.exists) {
@@ -153,19 +155,21 @@ const updateItem = async (collectionName, req, res) => {
       }
     }
 
-    // Se ainda houver dados para atualizar (além de newAddress)
     if (Object.keys(updatedData).length > 0) {
+        // Converte datas string de volta para Timestamps do Firestore onde necessário
+        if (updatedData.dataVencimento) updatedData.dataVencimento = new Date(updatedData.dataVencimento);
+        if (updatedData.dataRecebimento) updatedData.dataRecebimento = new Date(updatedData.dataRecebimento);
+        
         await itemRef.update(updatedData);
     }
     
     const updatedDocSnapshot = await itemRef.get();
     const updatedDoc = { id: updatedDocSnapshot.id, ...updatedDocSnapshot.data() };
-     if (updatedDoc.createdAt && typeof updatedDoc.createdAt.toDate === 'function') {
-      updatedDoc.createdAt = updatedDoc.createdAt.toDate().toISOString();
-    }
-     if (updatedDoc.ultimaCompra && typeof updatedDoc.ultimaCompra.toDate === 'function') {
-      updatedDoc.ultimaCompra = updatedDoc.ultimaCompra.toDate().toISOString();
-    }
+    Object.keys(updatedDoc).forEach(key => {
+        if (updatedDoc[key] && typeof updatedDoc[key].toDate === 'function') {
+            updatedDoc[key] = updatedDoc[key].toDate().toISOString();
+        }
+    });
     res.status(200).json(updatedDoc);
   } catch (error) {
     res.status(500).json({ error: `Erro ao atualizar item: ${error.message}` });
@@ -182,28 +186,16 @@ const deleteItem = async (collectionName, req, res) => {
   }
 };
 
-// ENDPOINTS
-app.get('/api/produtos', (req, res) => getAllItems('produtos', res));
-app.post('/api/produtos', (req, res) => createItem('produtos', req, res));
-app.put('/api/produtos/:id', (req, res) => updateItem('produtos', req, res));
-app.delete('/api/produtos/:id', (req, res) => deleteItem('produtos', req, res));
+// ENDPOINTS GENÉRICOS
+const collections = ['produtos', 'clientes', 'pedidos', 'fornecedores', 'contas_a_pagar', 'contas_a_receber'];
+collections.forEach(collection => {
+    app.get(`/api/${collection}`, (req, res) => getAllItems(collection, res));
+    app.post(`/api/${collection}`, (req, res) => createItem(collection, req, res));
+    app.put(`/api/${collection}/:id`, (req, res) => updateItem(collection, req, res));
+    app.delete(`/api/${collection}/:id`, (req, res) => deleteItem(collection, req, res));
+});
 
-app.get('/api/clientes', (req, res) => getAllItems('clientes', res));
-app.post('/api/clientes', (req, res) => createItem('clientes', req, res));
-app.put('/api/clientes/:id', (req, res) => updateItem('clientes', req, res));
-app.delete('/api/clientes/:id', (req, res) => deleteItem('clientes', req, res));
-
-app.get('/api/pedidos', (req, res) => getAllItems('pedidos', res));
-app.post('/api/pedidos', (req, res) => createItem('pedidos', req, res));
-app.put('/api/pedidos/:id', (req, res) => updateItem('pedidos', req, res));
-app.delete('/api/pedidos/:id', (req, res) => deleteItem('pedidos', req, res));
-
-app.get('/api/despesas', (req, res) => getAllItems('despesas', res));
-app.post('/api/despesas', (req, res) => createItem('despesas', req, res));
-app.put('/api/despesas/:id', (req, res) => updateItem('despesas', req, res));
-app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
-
-// ENDPOINTS PARA USUÁRIOS
+// ENDPOINTS PARA USUÁRIOS (mantidos como estavam)
 app.get('/api/users', async (req, res) => {
     try {
         const listUsersResult = await admin.auth().listUsers(1000);
@@ -243,4 +235,3 @@ app.delete('/api/users/:uid', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
-
