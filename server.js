@@ -30,25 +30,33 @@ app.get('/', (req, res) => {
 });
 
 // --- FUNÇÕES AUXILIARES DA API ---
+const createLog = async (action, details) => {
+    try {
+        await db.collection('logs').add({
+            action,
+            details,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+    } catch (error) {
+        console.error("Erro ao criar log:", error);
+    }
+};
+
 const getAllItems = async (collectionName, res) => {
   try {
     const snapshot = await db.collection(collectionName).get();
     const items = snapshot.docs.map(doc => {
         const docData = doc.data();
-
-        // Converte todos os campos que são Timestamps do Firestore para strings ISO 8601
-        Object.keys(docData).forEach(key => {
-            if (docData[key] && typeof docData[key].toDate === 'function') {
-                docData[key] = docData[key].toDate().toISOString();
-            }
-        });
-
         if (collectionName === 'clientes') {
             if (docData.endereco && !docData.enderecos) {
                 docData.enderecos = [docData.endereco];
             }
         }
-        
+        Object.keys(docData).forEach(key => {
+            if (docData[key] && typeof docData[key].toDate === 'function') {
+                docData[key] = docData[key].toDate().toISOString();
+            }
+        });
         return { id: doc.id, ...docData };
     });
     res.status(200).json(items);
@@ -61,7 +69,6 @@ const createItem = async (collectionName, req, res) => {
   try {
     const { createdAt, ...itemData } = req.body;
     
-    // Lógica específica por coleção
     if (collectionName === 'pedidos') {
       const { itens } = req.body;
       if (!itens || !Array.isArray(itens) || itens.length === 0) {
@@ -84,14 +91,6 @@ const createItem = async (collectionName, req, res) => {
       ...itemData,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
-    
-    // Adiciona data de vencimento/recebimento se não existir
-    if((collectionName === 'contas_a_pagar' && !itemData.dataVencimento) || (collectionName === 'contas_a_receber' && !itemData.dataRecebimento)) {
-        const key = collectionName === 'contas_a_pagar' ? 'dataVencimento' : 'dataRecebimento';
-        itemWithTimestamp[key] = admin.firestore.FieldValue.serverTimestamp();
-    }
-
-
     if (collectionName === 'pedidos' && !itemWithTimestamp.origem) {
         itemWithTimestamp.origem = "Manual";
     }
@@ -99,11 +98,10 @@ const createItem = async (collectionName, req, res) => {
     const docRef = await db.collection(collectionName).add(itemWithTimestamp);
     const newItemSnapshot = await docRef.get();
     const newItem = { id: newItemSnapshot.id, ...newItemSnapshot.data() };
-    Object.keys(newItem).forEach(key => {
-        if (newItem[key] && typeof newItem[key].toDate === 'function') {
-            newItem[key] = newItem[key].toDate().toISOString();
-        }
-    });
+    if (newItem.createdAt && typeof newItem.createdAt.toDate === 'function') {
+      newItem.createdAt = newItem.createdAt.toDate().toISOString();
+    }
+    await createLog(`Criação em ${collectionName}`, `Item criado com ID: ${docRef.id}`);
     res.status(201).json(newItem);
   } catch (error) {
     res.status(500).json({ error: `Erro ao criar item: ${error.message}` });
@@ -115,7 +113,9 @@ const updateItem = async (collectionName, req, res) => {
     const { id } = req.params;
     const updatedData = req.body;
     const itemRef = db.collection(collectionName).doc(id);
-    
+    const docBefore = await itemRef.get();
+    const originalData = docBefore.data();
+
     if (collectionName === 'clientes' && updatedData.newAddress) {
         await itemRef.update({
             enderecos: admin.firestore.FieldValue.arrayUnion(updatedData.newAddress)
@@ -124,42 +124,41 @@ const updateItem = async (collectionName, req, res) => {
     }
     
     if (collectionName === 'pedidos') {
-      const pedidoDoc = await itemRef.get();
-      if (pedidoDoc.exists) {
-        const originalPedido = pedidoDoc.data();
         const novoStatus = updatedData.status;
-
-        if (novoStatus === 'Cancelado' && originalPedido.status !== 'Cancelado') {
-          if (originalPedido.itens && Array.isArray(originalPedido.itens)) {
+        if (novoStatus === 'Cancelado' && originalData.status !== 'Cancelado' && Array.isArray(originalData.itens)) {
             const batch = db.batch();
-            for (const item of originalPedido.itens) {
+            for (const item of originalData.itens) {
               if (item.id && item.quantity > 0) {
                 const productRef = db.collection('produtos').doc(item.id);
                 batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(item.quantity) });
               }
             }
             await batch.commit();
-          }
         }
-        
-        if (novoStatus === 'Finalizado' && originalPedido.status !== 'Finalizado') {
-          const { clienteId, total } = originalPedido;
-          if (clienteId && total > 0) {
-            const clienteRef = db.collection('clientes').doc(clienteId);
+        if (novoStatus === 'Finalizado' && originalData.status !== 'Finalizado' && originalData.clienteId && originalData.total > 0) {
+            const clienteRef = db.collection('clientes').doc(originalData.clienteId);
             await clienteRef.update({
-              totalCompras: admin.firestore.FieldValue.increment(total),
+              totalCompras: admin.firestore.FieldValue.increment(originalData.total),
               ultimaCompra: admin.firestore.FieldValue.serverTimestamp()
             });
-          }
         }
-      }
+    }
+
+    if (collectionName === 'pedidosCompra' && updatedData.status === 'Recebido' && originalData.status !== 'Recebido') {
+        const { itens } = updatedData;
+        if (Array.isArray(itens)) {
+            const batch = db.batch();
+            for (const item of itens) {
+                if (item.id && item.quantidade > 0) {
+                    const estoqueRef = db.collection('estoque').doc(item.id);
+                    batch.update(estoqueRef, { quantidade: admin.firestore.FieldValue.increment(item.quantidade) });
+                }
+            }
+            await batch.commit();
+        }
     }
 
     if (Object.keys(updatedData).length > 0) {
-        // Converte datas string de volta para Timestamps do Firestore onde necessário
-        if (updatedData.dataVencimento) updatedData.dataVencimento = new Date(updatedData.dataVencimento);
-        if (updatedData.dataRecebimento) updatedData.dataRecebimento = new Date(updatedData.dataRecebimento);
-        
         await itemRef.update(updatedData);
     }
     
@@ -170,6 +169,8 @@ const updateItem = async (collectionName, req, res) => {
             updatedDoc[key] = updatedDoc[key].toDate().toISOString();
         }
     });
+    
+    await createLog(`Atualização em ${collectionName}`, `Item ID ${id} atualizado.`);
     res.status(200).json(updatedDoc);
   } catch (error) {
     res.status(500).json({ error: `Erro ao atualizar item: ${error.message}` });
@@ -180,6 +181,7 @@ const deleteItem = async (collectionName, req, res) => {
   try {
     const { id } = req.params;
     await db.collection(collectionName).doc(id).delete();
+    await createLog(`Deleção em ${collectionName}`, `Item ID ${id} deletado.`);
     res.status(200).json({ message: `${collectionName} com id ${id} deletado com sucesso.` });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -232,6 +234,9 @@ app.post('/api/estoque', (req, res) => createItem('estoque', req, res));
 app.put('/api/estoque/:id', (req, res) => updateItem('estoque', req, res));
 app.delete('/api/estoque/:id', (req, res) => deleteItem('estoque', req, res));
 
+app.get('/api/logs', (req, res) => getAllItems('logs', res));
+
+
 // ENDPOINTS PARA USUÁRIOS
 app.get('/api/users', async (req, res) => {
     try {
@@ -250,22 +255,33 @@ app.post('/api/users', async (req, res) => {
     try {
         const userRecord = await admin.auth().createUser({ email, password });
         await db.collection('users').doc(userRecord.uid).set({ email, role });
+        await createLog('Criação de Usuário', `Usuário ${email} criado com permissão ${role}.`);
         res.status(201).json({ uid: userRecord.uid, email: userRecord.email, role });
     } catch (error) { res.status(500).json({ error: error.code }); }
 });
 app.put('/api/users/:uid/role', async (req, res) => {
     const { uid } = req.params; const { role } = req.body;
-    try { await db.collection('users').doc(uid).update({ role }); res.status(200).json({ message: 'Permissão atualizada.' });
+    try { 
+        await db.collection('users').doc(uid).update({ role }); 
+        await createLog('Atualização de Permissão', `Permissão do usuário UID ${uid} alterada para ${role}.`);
+        res.status(200).json({ message: 'Permissão atualizada.' });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 app.put('/api/users/:uid/password', async (req, res) => {
     const { uid } = req.params; const { password } = req.body;
-    try { await admin.auth().updateUser(uid, { password }); res.status(200).json({ message: 'Senha atualizada.' });
+    try { 
+        await admin.auth().updateUser(uid, { password }); 
+        await createLog('Atualização de Senha', `Senha do usuário UID ${uid} foi alterada.`);
+        res.status(200).json({ message: 'Senha atualizada.' });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 app.delete('/api/users/:uid', async (req, res) => {
     const { uid } = req.params;
-    try { await admin.auth().deleteUser(uid); await db.collection('users').doc(uid).delete(); res.status(200).json({ message: 'Usuário deletado.' });
+    try { 
+        await admin.auth().deleteUser(uid); 
+        await db.collection('users').doc(uid).delete(); 
+        await createLog('Deleção de Usuário', `Usuário UID ${uid} foi deletado.`);
+        res.status(200).json({ message: 'Usuário deletado.' });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
