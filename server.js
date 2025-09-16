@@ -9,13 +9,16 @@ const port = process.env.PORT || 5000;
 // --- Middlewares ---
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://localhost:3001', // Adicionado para desenvolvimento local do cardapio
   'https://www.anaguimaraesdoceria.com.br',
   'https://anaguimaraesdoceria.com.br',
   'https://doceria-crm-frontend-nceem34t8-ana-beatrizs-projects-1a0a8d4e.vercel.app/'
 ];
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    // Permitir requisições sem 'origin' (ex: Postman, apps mobile)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('vercel.app')) {
       callback(null, true);
     } else {
       callback(new Error('Acesso negado pela política de CORS'));
@@ -30,11 +33,12 @@ app.get('/', (req, res) => {
 });
 
 // --- FUNÇÕES AUXILIARES DA API ---
-const createLog = async (action, details) => {
+const createLog = async (action, details, userEmail = 'Sistema') => {
     try {
         await db.collection('logs').add({
             action,
             details,
+            userEmail,
             timestamp: admin.firestore.FieldValue.serverTimestamp()
         });
     } catch (error) {
@@ -47,11 +51,7 @@ const getAllItems = async (collectionName, res) => {
     const snapshot = await db.collection(collectionName).get();
     const items = snapshot.docs.map(doc => {
         const docData = doc.data();
-        if (collectionName === 'clientes') {
-            if (docData.endereco && !docData.enderecos) {
-                docData.enderecos = [docData.endereco];
-            }
-        }
+        // Converte timestamps para ISO strings para consistência
         Object.keys(docData).forEach(key => {
             if (docData[key] && typeof docData[key].toDate === 'function') {
                 docData[key] = docData[key].toDate().toISOString();
@@ -61,7 +61,7 @@ const getAllItems = async (collectionName, res) => {
     });
     res.status(200).json(items);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: `Erro ao buscar itens de ${collectionName}: ${error.message}` });
   }
 };
 
@@ -69,6 +69,7 @@ const createItem = async (collectionName, req, res) => {
   try {
     const { createdAt, ...itemData } = req.body;
     
+    // Lógica específica para Pedidos: Decrementar estoque
     if (collectionName === 'pedidos') {
       const { itens } = req.body;
       if (!itens || !Array.isArray(itens) || itens.length === 0) {
@@ -81,10 +82,13 @@ const createItem = async (collectionName, req, res) => {
           batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(-item.quantity) });
         }
       }
+      // Se tiver cupom, incrementa o uso
+      if (itemData.cupom && itemData.cupom.codigo) {
+        const cupomRef = db.collection('cupons').doc(itemData.cupom.codigo);
+        batch.update(cupomRef, { usos: admin.firestore.FieldValue.increment(1) });
+      }
+
       await batch.commit();
-    } else if (collectionName === 'clientes' && itemData.endereco) {
-        itemData.enderecos = [itemData.endereco];
-        delete itemData.endereco;
     }
 
     const itemWithTimestamp = {
@@ -104,7 +108,7 @@ const createItem = async (collectionName, req, res) => {
     await createLog(`Criação em ${collectionName}`, `Item criado com ID: ${docRef.id}`);
     res.status(201).json(newItem);
   } catch (error) {
-    res.status(500).json({ error: `Erro ao criar item: ${error.message}` });
+    res.status(500).json({ error: `Erro ao criar item em ${collectionName}: ${error.message}` });
   }
 };
 
@@ -114,17 +118,24 @@ const updateItem = async (collectionName, req, res) => {
     const updatedData = req.body;
     const itemRef = db.collection(collectionName).doc(id);
     const docBefore = await itemRef.get();
+    if (!docBefore.exists) {
+        return res.status(404).json({ error: `Item com ID ${id} não encontrado em ${collectionName}.`});
+    }
     const originalData = docBefore.data();
 
+    // Lógica específica para Clientes: Adicionar novo endereço
     if (collectionName === 'clientes' && updatedData.newAddress) {
         await itemRef.update({
             enderecos: admin.firestore.FieldValue.arrayUnion(updatedData.newAddress)
         });
-        delete updatedData.newAddress;
+        // Remove a propriedade para não ser atualizada novamente
+        delete updatedData.newAddress; 
     }
     
+    // Lógica específica para Pedidos: Cancelamento e Finalização
     if (collectionName === 'pedidos') {
         const novoStatus = updatedData.status;
+        // Se o pedido for cancelado, retorna o estoque
         if (novoStatus === 'Cancelado' && originalData.status !== 'Cancelado' && Array.isArray(originalData.itens)) {
             const batch = db.batch();
             for (const item of originalData.itens) {
@@ -133,8 +144,14 @@ const updateItem = async (collectionName, req, res) => {
                 batch.update(productRef, { estoque: admin.firestore.FieldValue.increment(item.quantity) });
               }
             }
+             // Se tinha cupom, decrementa o uso
+            if (originalData.cupom && originalData.cupom.codigo) {
+                const cupomRef = db.collection('cupons').doc(originalData.cupom.codigo);
+                batch.update(cupomRef, { usos: admin.firestore.FieldValue.increment(-1) });
+            }
             await batch.commit();
         }
+        // Se o pedido for finalizado, atualiza o total de compras do cliente
         if (novoStatus === 'Finalizado' && originalData.status !== 'Finalizado' && originalData.clienteId && originalData.total > 0) {
             const clienteRef = db.collection('clientes').doc(originalData.clienteId);
             await clienteRef.update({
@@ -144,6 +161,7 @@ const updateItem = async (collectionName, req, res) => {
         }
     }
 
+    // Lógica específica para Pedidos de Compra: Recebimento de insumos
     if (collectionName === 'pedidosCompra' && updatedData.status === 'Recebido' && originalData.status !== 'Recebido') {
         const { itens } = updatedData;
         if (Array.isArray(itens)) {
@@ -158,6 +176,7 @@ const updateItem = async (collectionName, req, res) => {
         }
     }
 
+    // Garante que só atualizamos se houver dados (além do newAddress já tratado)
     if (Object.keys(updatedData).length > 0) {
         await itemRef.update(updatedData);
     }
@@ -173,7 +192,7 @@ const updateItem = async (collectionName, req, res) => {
     await createLog(`Atualização em ${collectionName}`, `Item ID ${id} atualizado.`);
     res.status(200).json(updatedDoc);
   } catch (error) {
-    res.status(500).json({ error: `Erro ao atualizar item: ${error.message}` });
+    res.status(500).json({ error: `Erro ao atualizar item em ${collectionName}: ${error.message}` });
   }
 };
 
@@ -184,60 +203,77 @@ const deleteItem = async (collectionName, req, res) => {
     await createLog(`Deleção em ${collectionName}`, `Item ID ${id} deletado.`);
     res.status(200).json({ message: `${collectionName} com id ${id} deletado com sucesso.` });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: `Erro ao deletar item em ${collectionName}: ${error.message}` });
   }
 };
 
-// ENDPOINTS
-app.get('/api/produtos', (req, res) => getAllItems('produtos', res));
-app.post('/api/produtos', (req, res) => createItem('produtos', req, res));
-app.put('/api/produtos/:id', (req, res) => updateItem('produtos', req, res));
-app.delete('/api/produtos/:id', (req, res) => deleteItem('produtos', req, res));
-
-app.get('/api/clientes', (req, res) => getAllItems('clientes', res));
-app.post('/api/clientes', (req, res) => createItem('clientes', req, res));
-app.put('/api/clientes/:id', (req, res) => updateItem('clientes', req, res));
-app.delete('/api/clientes/:id', (req, res) => deleteItem('clientes', req, res));
-
-app.get('/api/pedidos', (req, res) => getAllItems('pedidos', res));
-app.post('/api/pedidos', (req, res) => createItem('pedidos', req, res));
-app.put('/api/pedidos/:id', (req, res) => updateItem('pedidos', req, res));
-app.delete('/api/pedidos/:id', (req, res) => deleteItem('pedidos', req, res));
-
-app.get('/api/despesas', (req, res) => getAllItems('despesas', res));
-app.post('/api/despesas', (req, res) => createItem('despesas', req, res));
-app.put('/api/despesas/:id', (req, res) => updateItem('despesas', req, res));
-app.delete('/api/despesas/:id', (req, res) => deleteItem('despesas', req, res));
-
-app.get('/api/contas_a_pagar', (req, res) => getAllItems('contas_a_pagar', res));
-app.post('/api/contas_a_pagar', (req, res) => createItem('contas_a_pagar', req, res));
-app.put('/api/contas_a_pagar/:id', (req, res) => updateItem('contas_a_pagar', req, res));
-app.delete('/api/contas_a_pagar/:id', (req, res) => deleteItem('contas_a_pagar', req, res));
-
-app.get('/api/contas_a_receber', (req, res) => getAllItems('contas_a_receber', res));
-app.post('/api/contas_a_receber', (req, res) => createItem('contas_a_receber', req, res));
-app.put('/api/contas_a_receber/:id', (req, res) => updateItem('contas_a_receber', req, res));
-app.delete('/api/contas_a_receber/:id', (req, res) => deleteItem('contas_a_receber', req, res));
-
-app.get('/api/fornecedores', (req, res) => getAllItems('fornecedores', res));
-app.post('/api/fornecedores', (req, res) => createItem('fornecedores', req, res));
-app.put('/api/fornecedores/:id', (req, res) => updateItem('fornecedores', req, res));
-app.delete('/api/fornecedores/:id', (req, res) => deleteItem('fornecedores', req, res));
-
-app.get('/api/pedidosCompra', (req, res) => getAllItems('pedidosCompra', res));
-app.post('/api/pedidosCompra', (req, res) => createItem('pedidosCompra', req, res));
-app.put('/api/pedidosCompra/:id', (req, res) => updateItem('pedidosCompra', req, res));
-app.delete('/api/pedidosCompra/:id', (req, res) => deleteItem('pedidosCompra', req, res));
-
-app.get('/api/estoque', (req, res) => getAllItems('estoque', res));
-app.post('/api/estoque', (req, res) => createItem('estoque', req, res));
-app.put('/api/estoque/:id', (req, res) => updateItem('estoque', req, res));
-app.delete('/api/estoque/:id', (req, res) => deleteItem('estoque', req, res));
-
-app.get('/api/logs', (req, res) => getAllItems('logs', res));
+// --- ENDPOINTS GENÉRICOS ---
+const collections = ['produtos', 'clientes', 'pedidos', 'contas_a_pagar', 'contas_a_receber', 'fornecedores', 'pedidosCompra', 'estoque', 'logs', 'cupons'];
+collections.forEach(collection => {
+    app.get(`/api/${collection}`, (req, res) => getAllItems(collection, res));
+    app.post(`/api/${collection}`, (req, res) => createItem(collection, req, res));
+    app.put(`/api/${collection}/:id`, (req, res) => updateItem(collection, req, res));
+    app.delete(`/api/${collection}/:id`, (req, res) => deleteItem(collection, req, res));
+});
 
 
-// ENDPOINTS PARA USUÁRIOS
+// --- ENDPOINT ESPECÍFICO PARA VERIFICAR CUPOM ---
+app.post('/api/cupons/verificar', async (req, res) => {
+    const { codigo, valorCarrinho } = req.body;
+
+    if (!codigo || typeof valorCarrinho !== 'number') {
+        return res.status(400).json({ valido: false, mensagem: 'Código do cupom e valor do carrinho são obrigatórios.' });
+    }
+
+    try {
+        const cupomRef = db.collection('cupons').doc(codigo.toUpperCase());
+        const cupomDoc = await cupomRef.get();
+
+        if (!cupomDoc.exists) {
+            return res.status(404).json({ valido: false, mensagem: 'Cupom inválido.' });
+        }
+
+        const cupom = cupomDoc.data();
+
+        if (cupom.status !== 'Ativo') {
+            return res.json({ valido: false, mensagem: 'Este cupom não está ativo.' });
+        }
+
+        if (cupom.usos >= cupom.limiteUso) {
+            return res.json({ valido: false, mensagem: 'Este cupom já atingiu o limite de usos.' });
+        }
+
+        if (valorCarrinho < cupom.valorMinimo) {
+            return res.json({ valido: false, mensagem: `O valor mínimo para este cupom é de R$ ${cupom.valorMinimo.toFixed(2)}.` });
+        }
+
+        // Calcula o desconto
+        let valorDesconto = 0;
+        if (cupom.tipoDesconto === 'percentual') {
+            valorDesconto = (valorCarrinho * cupom.valor) / 100;
+        } else { // Fixo
+            valorDesconto = cupom.valor;
+        }
+
+        res.status(200).json({
+            valido: true,
+            mensagem: 'Cupom aplicado com sucesso!',
+            cupom: {
+                codigo: cupom.codigo,
+                tipoDesconto: cupom.tipoDesconto,
+                valor: cupom.valor,
+                valorDesconto: valorDesconto
+            }
+        });
+
+    } catch (error) {
+        console.error("Erro ao verificar cupom:", error);
+        res.status(500).json({ valido: false, mensagem: 'Ocorreu um erro interno. Tente novamente.' });
+    }
+});
+
+
+// --- ENDPOINTS PARA GERENCIAMENTO DE USUÁRIOS (Firebase Auth) ---
 app.get('/api/users', async (req, res) => {
     try {
         const listUsersResult = await admin.auth().listUsers(1000);
@@ -288,4 +324,3 @@ app.delete('/api/users/:uid', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
-
