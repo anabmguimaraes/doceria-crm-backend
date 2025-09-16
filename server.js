@@ -91,6 +91,37 @@ const createItem = async (collectionName, req, res) => {
       await batch.commit();
     }
 
+    // Lógica específica para Cupons: Usar o código como ID do documento
+    if (collectionName === 'cupons') {
+        if (!itemData.codigo || itemData.codigo.trim() === '') {
+            return res.status(400).json({ error: 'O código do cupom é obrigatório.' });
+        }
+        const cupomId = itemData.codigo.toUpperCase();
+        const docRef = db.collection('cupons').doc(cupomId);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+            return res.status(409).json({ error: 'Um cupom com este código já existe.' });
+        }
+
+        const itemWithTimestamp = {
+          ...itemData,
+          codigo: cupomId, // Garante que o código salvo está em maiúsculas
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await docRef.set(itemWithTimestamp);
+        
+        const newItemSnapshot = await docRef.get();
+        const newItem = { id: newItemSnapshot.id, ...newItemSnapshot.data() };
+        if (newItem.createdAt && typeof newItem.createdAt.toDate === 'function') {
+          newItem.createdAt = newItem.createdAt.toDate().toISOString();
+        }
+        await createLog(`Criação em ${collectionName}`, `Item criado com ID: ${newItemSnapshot.id}`);
+        // Retorna para evitar a execução do código genérico abaixo
+        return res.status(201).json(newItem);
+    }
+
+
     const itemWithTimestamp = {
       ...itemData,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -324,3 +355,4 @@ app.delete('/api/users/:uid', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
 });
+
