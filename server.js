@@ -1,29 +1,22 @@
 const express = require('express');
 const cors = require('cors');
-const { db } = require('./firebaseConfig'); // Garanta que firebaseConfig.js está na mesma pasta
+const admin = require("firebase-admin");
+const { db } = require('./firebaseConfig');
 
-// Inicialização do Express
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- Middlewares Essenciais ---
-app.use(cors()); // Habilita o CORS para permitir requisições do seu frontend
-app.use(express.json()); // <<< CORREÇÃO PRINCIPAL: Habilita o servidor a ler e interpretar JSON no corpo das requisições. A falta desta linha era a causa provável do erro.
+app.use(cors());
+app.use(express.json());
 
-// --- API Routes ---
-
-/**
- * Rota para verificar a validade de um cupom de desconto.
- */
 app.post('/api/cupons/verificar', async (req, res) => {
-    // A linha `app.use(express.json());` garante que `req.body` tenha os dados enviados
-    const { codigo, totalCarrinho } = req.body;
+    const { codigo, totalCarrinho, telefone } = req.body;
 
-    // Validação de entrada
-    if (!codigo || totalCarrinho === undefined) {
-        // Retorna o erro que você estava vendo se os dados não chegarem
-        return res.status(400).json({ valido: false, mensagem: "Código do cupom e valor do carrinho são obrigatórios." });
+    if (!codigo || totalCarrinho === undefined || !telefone) {
+        return res.status(400).json({ valido: false, mensagem: "Código, total do carrinho e telefone são obrigatórios." });
     }
+
+    const telefoneLimpo = telefone.replace(/\D/g, '');
 
     try {
         const cuponsRef = db.collection('cupons');
@@ -36,26 +29,29 @@ app.post('/api/cupons/verificar', async (req, res) => {
         const cupomDoc = snapshot.docs[0];
         const cupom = { id: cupomDoc.id, ...cupomDoc.data() };
 
-        // Realiza as validações do cupom
         if (cupom.status !== 'Ativo') {
             return res.json({ valido: false, mensagem: "Este cupom não está mais ativo." });
         }
+        // ALTERAÇÃO: Mensagem atualizada para "Cupom expirado" quando o limite global é atingido.
         if (cupom.usos >= cupom.limiteUso) {
-            return res.json({ valido: false, mensagem: "Este cupom já atingiu o limite de usos." });
+            return res.json({ valido: false, mensagem: "Cupom expirado." });
         }
         if (totalCarrinho < cupom.valorMinimo) {
             return res.json({ valido: false, mensagem: `O valor mínimo para este cupom é de R$ ${cupom.valorMinimo.toFixed(2)}.` });
         }
         
-        // Calcula o valor do desconto
-        let valorDesconto = 0;
-        if (cupom.tipoDesconto === 'percentual') {
-            valorDesconto = (totalCarrinho * cupom.valor) / 100;
-        } else if (cupom.tipoDesconto === 'fixo') {
-            valorDesconto = cupom.valor;
+        const cupomUsosRef = db.collection('cupomUsos');
+        const usoSnapshot = await cupomUsosRef.where('cupomId', '==', cupom.id).where('telefone', '==', telefoneLimpo).limit(1).get();
+
+        // ALTERAÇÃO: Mensagem atualizada para uso único por pessoa.
+        if (!usoSnapshot.empty) {
+            return res.json({ valido: false, mensagem: "Este cupom só pode ser utilizado uma vez por pessoa." });
         }
 
-        // Garante que o desconto não seja maior que o total do carrinho
+        let valorDesconto = (cupom.tipoDesconto === 'percentual')
+            ? (totalCarrinho * cupom.valor) / 100
+            : cupom.valor;
+        
         valorDesconto = Math.min(valorDesconto, totalCarrinho);
 
         const cupomAplicado = {
@@ -71,67 +67,103 @@ app.post('/api/cupons/verificar', async (req, res) => {
     }
 });
 
-/**
- * Função genérica para criar rotas de CRUD (Create, Read, Update, Delete) para uma coleção.
- * @param {string} collectionName - O nome da coleção no Firestore.
- */
 const createCrudEndpoints = (collectionName) => {
-    // GET (Listar todos)
     app.get(`/api/${collectionName}`, async (req, res) => {
         try {
             const snapshot = await db.collection(collectionName).get();
             const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             res.json(items);
         } catch (error) {
-            console.error(`Erro ao buscar ${collectionName}:`, error);
             res.status(500).send(error.message);
         }
     });
 
-    // POST (Criar novo)
-    app.post(`/api/${collectionName}`, async (req, res) => {
-        try {
-            const newItem = { ...req.body, createdAt: new Date().toISOString() };
-            const docRef = await db.collection(collectionName).add(newItem);
-            res.status(201).json({ id: docRef.id, ...newItem });
-        } catch (error) {
-            console.error(`Erro ao criar em ${collectionName}:`, error);
-            res.status(500).send(error.message);
-        }
-    });
+    if (collectionName !== 'pedidos') {
+        app.post(`/api/${collectionName}`, async (req, res) => {
+            try {
+                const newItem = { ...req.body, createdAt: new Date().toISOString() };
+                const docRef = await db.collection(collectionName).add(newItem);
+                res.status(201).json({ id: docRef.id, ...newItem });
+            } catch (error) {
+                res.status(500).send(error.message);
+            }
+        });
+    }
 
-    // PUT (Atualizar)
     app.put(`/api/${collectionName}/:id`, async (req, res) => {
         try {
-            const { id } = req.params;
-            await db.collection(collectionName).doc(id).set(req.body, { merge: true });
-            res.status(200).json({ id, ...req.body });
+            await db.collection(collectionName).doc(req.params.id).set(req.body, { merge: true });
+            res.status(200).json({ id: req.params.id, ...req.body });
         } catch (error) {
-            console.error(`Erro ao atualizar em ${collectionName}:`, error);
             res.status(500).send(error.message);
         }
     });
 
-    // DELETE (Deletar)
     app.delete(`/api/${collectionName}/:id`, async (req, res) => {
         try {
-            const { id } = req.params;
-            await db.collection(collectionName).doc(id).delete();
+            await db.collection(collectionName).doc(req.params.id).delete();
             res.status(204).send();
         } catch (error) {
-            console.error(`Erro ao deletar em ${collectionName}:`, error);
             res.status(500).send(error.message);
         }
     });
 };
 
-// Cria as rotas de CRUD para todas as coleções usadas no seu frontend
-['clientes', 'pedidos', 'produtos', 'contas_a_pagar', 'contas_a_receber', 'fornecedores', 'pedidosCompra', 'estoque', 'cupons', 'logs'].forEach(collection => {
+app.post(`/api/pedidos`, async (req, res) => {
+    try {
+        const orderData = req.body;
+        
+        if (orderData.cupom && orderData.telefone) {
+            const { cupom, telefone, subtotal } = orderData;
+            const telefoneLimpo = telefone.replace(/\D/g, '');
+
+            const cupomDoc = await db.collection('cupons').doc(cupom.id).get();
+            if (!cupomDoc.exists) return res.status(400).json({ message: 'Cupom inválido.' });
+            
+            const cupomAtual = cupomDoc.data();
+            // Validação dupla no backend
+            if (cupomAtual.status !== 'Ativo' || cupomAtual.usos >= cupomAtual.limiteUso || subtotal < cupomAtual.valorMinimo) {
+                 return res.status(400).json({ message: 'Cupom não é mais válido.' });
+            }
+
+            const usoSnapshot = await db.collection('cupomUsos').where('cupomId', '==', cupom.id).where('telefone', '==', telefoneLimpo).limit(1).get();
+            if (!usoSnapshot.empty) {
+                return res.status(400).json({ message: 'Este cupom já foi utilizado por você.' });
+            }
+        }
+
+        const newItem = { ...orderData, createdAt: new Date().toISOString() };
+        const docRef = await db.collection('pedidos').add(newItem);
+        
+        if (orderData.cupom && orderData.telefone) {
+             const { cupom, telefone, clienteId } = orderData;
+             const telefoneLimpo = telefone.replace(/\D/g, '');
+
+             await db.collection('cupomUsos').add({
+                cupomId: cupom.id,
+                codigo: cupom.codigo,
+                clienteId: clienteId,
+                telefone: telefoneLimpo,
+                pedidoId: docRef.id,
+                dataUso: new Date().toISOString()
+            });
+
+            const cupomDocRef = db.collection('cupons').doc(cupom.id);
+            await cupomDocRef.update({ usos: admin.firestore.FieldValue.increment(1) });
+        }
+        
+        res.status(201).json({ id: docRef.id, ...newItem });
+    } catch (error) {
+        console.error(`Erro ao criar em pedidos:`, error);
+        res.status(500).send(error.message);
+    }
+});
+
+['clientes', 'produtos', 'contas_a_pagar', 'contas_a_receber', 'fornecedores', 'pedidosCompra', 'estoque', 'cupons', 'logs', 'cupomUsos'].forEach(collection => {
     createCrudEndpoints(collection);
 });
 
-
-// --- Inicialização do Servidor ---
 app.listen(PORT, () => {
     console.log(`Servidor da Doceria CRM rodando na porta ${PORT}`);
 });
+
